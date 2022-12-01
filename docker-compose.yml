@@ -1,0 +1,218 @@
+version: '3'
+
+services:
+  bitcoin:
+    build: ./docker/bitcoin
+    stop_grace_period: 5m
+    restart: always
+    expose: 
+      - 8332
+      - 8333
+      - 28332
+    ports:
+      - 8333:8333
+    stop_signal : SIGINT
+    container_name: bitcoin
+    volumes:
+      - ./software/bitcoin/bin:/usr/local/bin
+      - ./software/bitcoin/src:/src
+      - ./storage/bitcoin:/bitcoindata
+      - ./data/bitcoin/bitcoin.conf:/bitcoin.conf
+    networks:
+      undercover:
+        ipv4_address: 42.0.0.2
+
+  electrs:
+    build: ./docker/electrs
+    restart: always
+    depends_on:
+      - bitcoin
+    container_name: electrs
+    ports:
+      - 50001:50001
+    stop_signal : SIGINT
+    volumes:
+      - ./software/electrs/bin:/usr/local/bin
+      - ./software/electrs/src:/src
+      - ./storage/electrs/db:/db
+      - ./data/electrs/config.toml:/config.toml
+      - ./storage/bitcoin:/bitcoindata
+    networks:
+      undercover:
+        ipv4_address: 42.0.0.3
+      normie:
+
+  btcrpcexplorer:
+    build: ./docker/btcrpcexplorer
+    restart: always
+    depends_on:
+      - bitcoin
+    container_name: btcrpcexplorer
+    ports:
+      - 3002:3002
+    stop_signal : SIGINT
+    volumes:
+      - ./software/btcrpcexplorer/bin:/usr/local/bin
+      - ./software/btcrpcexplorer/src:/src
+      - ./storage/bitcoin:/bitcoindata
+    networks:
+      undercover:
+        ipv4_address: 42.0.0.5
+      normie:
+
+  lnd:
+    build: ./docker/lnd
+    restart: always
+    depends_on:
+      - bitcoin
+      - tor
+    container_name: lnd
+    ports:
+      - 9911:9911
+      - 9735:9735
+      - 10009:10009
+      - 8080:8080
+    stop_signal : SIGINT
+    volumes:
+      - ./software/lnd/bin:/usr/local/bin
+      - ./software/lnd/src:/src
+      - ./data/lnd/data:/lnd
+      - ./data/lnd/backup:/backup
+      - ./data/tor/lib/lnd/hs_ed25519_secret_key:/.torkey_secret
+    networks:
+      undercover:
+        ipv4_address: 42.0.0.7
+      normie:
+
+  mempool-web:
+    environment:
+      FRONTEND_HTTP_PORT: "3001"
+      BACKEND_MAINNET_HTTP_HOST: "mempool-api"
+    image: mempool/frontend:latest
+    links:
+      - mempool-db
+    restart: on-failure
+    stop_grace_period: 1m
+    command: "./wait-for mempool-db:3306 --timeout=720 -- nginx -g 'daemon off;'"
+    user: "1000:1000"
+    ports:
+      - 3001:3001
+    networks:
+      normie:
+      localhost:
+  mempool-api:
+    environment:
+      CORE_RPC_HOST: "bitcoin"
+      CORE_RPC_PORT: "8332"
+      CORE_RPC_USERNAME: "loLfrmhwsYOElvoBDE0RhuFzhxZgsP6dkf6lgP9MnnV6bsGQhG4hptNQVcbcuh9ixoPZRYnw7DRbICHQP6QtnYIoT6Q0i4zTiPDbexNPsURp9g9XUE30KaLQJN6caNgO"
+      CORE_RPC_PASSWORD: "iD62YC4n18FNSuOx27xuBeBUhfd8beXQIRCl9M4Ao5NYG5JqBCZuYnpBb9OrNS2K8INGjsHLKd4AbbMu3NPTkSZJRe6wWIib6AzgqZkE36xRmmhmCZwaHXjMfolv6hNZ"
+      MEMPOOL_BACKEND: "electrum"
+      ELECTRUM_HOST: "electrs"
+      ELECTRUM_PORT: "50001"
+      ELECTRUM_TLS_ENABLED: "false"
+      DATABASE_ENABLED: "true"
+      DATABASE_HOST: "mempool-db"
+      DATABASE_DATABASE: "mempool"
+      DATABASE_USERNAME: "mempool"
+      DATABASE_PASSWORD: "mempool"
+      STATISTICS_ENABLED: "true"
+    image: mempool/backend:latest
+    user: "1000:1000"
+    links:
+      - mempool-db
+    restart: on-failure
+    stop_grace_period: 1m
+    command: "./wait-for-it.sh mempool-db:3306 --timeout=720 --strict -- ./start.sh"
+    volumes:
+      - ./storage/mempool/api:/backend/cache:rw
+    networks:
+      undercover:
+        ipv4_address: 42.0.0.6
+      localhost:
+  mempool-db:
+    environment:
+      MYSQL_DATABASE: "mempool"
+      MYSQL_USER: "mempool"
+      MYSQL_PASSWORD: "mempool"
+      MYSQL_ROOT_PASSWORD: "admin"
+    image: mariadb:10
+    restart: on-failure
+    stop_grace_period: 1m
+    expose:
+      - 3306
+    user: "1000:1000"
+    volumes:
+      - ./storage/mempool/db:/var/lib/mysql:rw
+    networks:
+      - localhost
+
+  tor:
+    build: ./docker/tor
+    restart: always
+    ports:
+      - 127.0.0.1:8050:9050
+      - 127.0.0.1:8051:9051
+      - 127.0.0.1:8118:8118
+    expose:
+      - 9050
+      - 9051
+      - 8118
+    stop_signal : SIGINT
+    container_name: tor
+    volumes:
+      - ./software/tor/bin:/usr/local/bin
+      - ./software/tor/src:/src
+      - ./data/tor/lib:/var/lib/tor
+      - ./data/tor/etc:/etc/tor
+    networks:
+      undercover:
+        ipv4_address: 42.0.0.4
+
+#  caddy:
+#    image: caddy
+#    container_name: caddy
+#    ports:
+#      - 80:80
+#      - 443:443
+#      - 50002:50002
+#      - 4224:4224
+#    volumes:
+#      - ./data/caddy/Caddyfile:/etc/caddy/Caddyfile
+#      - ./data/caddy/data:/data
+#      - ./data/caddy/config:/config
+#    networks: 
+#      undercover:
+#        ipv4_address: 42.0.0.4
+#      normie:
+#    restart: unless-stopped
+
+#  nginx:
+#    image: nginx
+#    container_name: nginx
+ #   links:
+#      - electrs
+ #   ports:
+ #     - 80:80
+ #     - 443:443
+ ##     - 50001:50001
+ #     - 4224:4224
+ #   volumes:
+ #     - ./data/nginx/nginx.conf:/etc/nginx/nginx.conf
+ #   networks: 
+ #     undercover:
+  #      ipv4_address: 42.0.0.4
+  #    normie:
+  #  restart: unless-stopped
+
+networks:
+  normie:
+    external: true
+  localhost:
+    external: false
+    driver: bridge
+  undercover:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 42.0.0.0/16
